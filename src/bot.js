@@ -8,6 +8,7 @@ const cron = require("node-cron");
 const db = require("./db");
 const ai = require("./ai");
 const { selectPlan, formatWorkoutDay } = require("./workout-plans");
+const { STYLES, selectStylePlan } = require("./workout-styles");
 const { searchFood, getHighProteinFoods } = require("./indian-food-db");
 const {
   isPro, shouldShowPaywall, getRemainingChats, formatPricingMessage,
@@ -141,6 +142,27 @@ bot.on("text", async (ctx, next) => {
       if (text.toLowerCase().includes("beginner") || text.includes("🆕")) user.experience = "beginner";
       else if (text.toLowerCase().includes("intermediate") || text.includes("💪")) user.experience = "intermediate";
       else user.experience = "advanced";
+      user.onboardingStep = "workout_style";
+      db.saveUser(chatId, user);
+      const styleQ = { en: "What type of workout do you prefer?", hi: "आप किस तरह का वर्कआउट पसंद करते हैं?", hinglish: "Aapko kis type ka workout pasand hai?" };
+      return ctx.reply(
+        styleQ[L] || styleQ.hinglish,
+        Markup.keyboard([
+          ["🏋️ Gym / Weights", "🧘 Yoga"],
+          ["🤸 Pilates", "💪 Calisthenics"],
+          ["🏠 Home (No Equipment)", "🔥 HIIT / Cardio"],
+          ["🔀 Mixed / Hybrid"],
+        ]).resize().oneTime()
+      );
+
+    case "workout_style":
+      if (text.includes("Yoga") || text.includes("🧘")) user.workoutStyle = "yoga";
+      else if (text.includes("Pilates") || text.includes("🤸")) user.workoutStyle = "pilates";
+      else if (text.includes("Calisthenics") || text.includes("Bodyweight")) user.workoutStyle = "calisthenics";
+      else if (text.includes("Home") || text.includes("🏠")) user.workoutStyle = "home";
+      else if (text.includes("HIIT") || text.includes("🔥") || text.includes("Cardio")) user.workoutStyle = "hiit";
+      else if (text.includes("Mixed") || text.includes("🔀") || text.includes("Hybrid")) user.workoutStyle = "mixed";
+      else user.workoutStyle = "gym";
       user.onboardingStep = "diet";
       db.saveUser(chatId, user);
       return ctx.reply(
@@ -185,7 +207,15 @@ bot.on("text", async (ctx, next) => {
       user.dailyCalorieTarget = Math.round(user.weight * (multipliers[user.goal] || 31));
       user.dailyProteinTarget = Math.round(user.weight * (proteinPer[user.goal] || 1.8));
 
-      const plan = selectPlan(user.experience, user.gymDays, user.gender);
+      // Select plan based on workout style
+      let plan;
+      if (user.workoutStyle && user.workoutStyle !== "gym" && user.workoutStyle !== "mixed") {
+        plan = selectStylePlan(user.workoutStyle, user.experience, user.gymDays, user.gender);
+      }
+      if (!plan) {
+        // Default to gym plan (also used for "mixed" style)
+        plan = selectPlan(user.experience, user.gymDays, user.gender);
+      }
       user.currentPlan = plan;
       user.onboardingComplete = true;
       db.saveUser(chatId, user);

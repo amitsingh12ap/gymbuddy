@@ -68,6 +68,7 @@ function createUser(chatId, name) {
     experience: null,
     gymDays: null,
     gymTime: null,
+    workoutStyle: null, // "gym" | "yoga" | "pilates" | "calisthenics" | "home" | "hiit" | "mixed"
     injuries: [],
     dietPref: null,
     language: "hinglish",
