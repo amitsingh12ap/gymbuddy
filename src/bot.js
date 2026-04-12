@@ -724,13 +724,28 @@ async function start() {
   // Pull latest user data from GitHub (survives Railway redeploys)
   await db.pullFromGitHub();
 
+  // Clear any stale polling connections before starting
+  const axios = require("axios");
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  try {
+    await axios.post(`https://api.telegram.org/bot${token}/deleteWebhook`, { drop_pending_updates: true });
+    // Small delay to let Telegram release the polling lock
+    await new Promise(r => setTimeout(r, 3000));
+  } catch {}
+
   await bot.launch();
   console.log("🏋️ VeerHanumantrain is live! Telegram bot running.");
 }
 
 start().catch(err => {
   console.error("Failed to start:", err.message);
-  process.exit(1);
+  // Don't exit immediately on 409 — wait and let Railway retry
+  if (err.message?.includes("409")) {
+    console.log("Waiting 15s for old instance to release...");
+    setTimeout(() => process.exit(1), 15000);
+  } else {
+    process.exit(1);
+  }
 });
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
