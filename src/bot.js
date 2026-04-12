@@ -16,6 +16,7 @@ const {
 } = require("./subscription");
 const { t, getPaywallMsg } = require("./lang");
 const guard = require("./abuse-guard");
+const progress = require("./progress-engine");
 const fs = require("fs");
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
@@ -286,37 +287,23 @@ bot.command("food", async (ctx) => {
 // ── Progress tracking ─────────────────────────────────────────────────────────
 bot.hears(["📊 My Progress", "/progress"], async (ctx) => {
   const user = db.getUser(ctx.chat.id);
-  if (!user || !user.onboardingComplete) return ctx.reply("Please pehle /start kariye!");
+  if (!user || !user.onboardingComplete) return ctx.reply(t("not_started", user?.language || "en"));
+  const L = user.language || "hinglish";
 
-  const history = user.weightHistory || [];
-  const logs = user.workoutLogs || [];
-
-  let msg = `*Your Progress* 📊\n\n`;
-  msg += `Current weight: ${user.weight}kg\n`;
-  msg += `Target: ${user.goal}\n`;
-  msg += `Calories: ${user.dailyCalorieTarget} kcal/day\n`;
-  msg += `Protein: ${user.dailyProteinTarget}g/day\n\n`;
-
-  if (history.length > 0) {
-    msg += `*Weight History:*\n`;
-    history.slice(-5).forEach(h => {
-      msg += `  ${h.date}: ${h.weight}kg\n`;
-    });
-    const first = history[0].weight;
-    const last = history[history.length - 1].weight;
-    const diff = (last - first).toFixed(1);
-    msg += `\nChange: ${diff > 0 ? "+" : ""}${diff}kg\n`;
-  } else {
-    msg += `_No weight history yet. Use /weight 72 to log._\n`;
+  const summary = progress.generateWeeklySummary(user, L);
+  try {
+    await ctx.reply(summary, { parse_mode: "Markdown" });
+  } catch {
+    await ctx.reply(summary);
   }
+});
 
-  msg += `\n*Workouts this week:* ${logs.filter(l => {
-    const d = new Date(l.date);
-    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    return d > weekAgo;
-  }).length}/${user.gymDays?.length || 0}`;
-
-  ctx.reply(msg, { parse_mode: "Markdown" });
+// ── Myth Buster ──────────────────────────────────────────────────────────────
+bot.command("myth", async (ctx) => {
+  const user = db.getUser(ctx.chat.id);
+  if (!user) return ctx.reply(t("not_started", "en"));
+  const myth = progress.getRandomMyth(user, user.language || "hinglish");
+  ctx.reply(myth);
 });
 
 // ── Weight logging ────────────────────────────────────────────────────────────
@@ -633,6 +620,27 @@ bot.on("text", async (ctx) => {
   const msgCheck = guard.canSendMessage(ctx.chat.id, isPro(user));
   if (!msgCheck.allowed) return ctx.reply(msgCheck.reason);
 
+  // Check if this is a workout log (e.g., "bench 60kg 3x10")
+  const workoutLog = progress.parseWorkoutLog(text);
+  if (workoutLog) {
+    const result = progress.logWorkout(user, workoutLog.exercise, workoutLog.weight, workoutLog.sets, workoutLog.reps);
+    db.saveUser(ctx.chat.id, user);
+
+    let reply = `Logged: ${workoutLog.exercise} — ${workoutLog.weight}kg ${workoutLog.sets}x${workoutLog.reps} ✅`;
+
+    if (result.isNewPR) {
+      reply += `\n\n🏆 NEW PERSONAL RECORD! +${result.improvement}kg over your previous best!`;
+    }
+
+    const streak = progress.calculateStreak(user);
+    const streakInfo = progress.getStreakMessage(streak, L);
+    if (streakInfo?.message && [1, 3, 5, 7, 10, 15, 20, 30].includes(streak)) {
+      reply += `\n\n${streakInfo.message}`;
+    }
+
+    return ctx.reply(reply);
+  }
+
   // Sanitize input before sending to AI
   const sanitizedText = guard.sanitizeInput(text);
 
@@ -716,6 +724,36 @@ cron.schedule("30 3 * * *", () => {
         { parse_mode: "Markdown" }
       ).catch(err => console.error(`[reminder] Failed for ${chatId}:`, err.message));
     }
+  }
+});
+
+// ── Weekly summary (Sunday 8 PM IST = 2:30 PM UTC) ───────────────────────────
+cron.schedule("30 14 * * 0", () => {
+  console.log("[weekly] Sending weekly summaries...");
+  const allUsers = db.getAllUsers();
+
+  for (const [chatId, user] of Object.entries(allUsers)) {
+    if (!user.onboardingComplete) continue;
+    const L = user.language || "hinglish";
+    const summary = progress.generateWeeklySummary(user, L);
+
+    bot.telegram.sendMessage(chatId, summary)
+      .catch(err => console.error(`[weekly] Failed for ${chatId}:`, err.message));
+  }
+});
+
+// ── Daily myth buster (1 PM IST = 7:30 AM UTC) ──────────────────────────────
+cron.schedule("30 7 * * *", () => {
+  console.log("[myth] Sending daily myth buster...");
+  const allUsers = db.getAllUsers();
+
+  for (const [chatId, user] of Object.entries(allUsers)) {
+    if (!user.onboardingComplete || !isPro(user)) continue; // Pro only
+    const L = user.language || "hinglish";
+    const myth = progress.getRandomMyth(user, L);
+
+    bot.telegram.sendMessage(chatId, myth)
+      .catch(err => console.error(`[myth] Failed for ${chatId}:`, err.message));
   }
 });
 
