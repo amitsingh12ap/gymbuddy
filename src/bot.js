@@ -720,8 +720,17 @@ cron.schedule("30 3 * * *", () => {
 });
 
 // ── Launch ────────────────────────────────────────────────────────────────────
-bot.launch().then(() => {
+async function start() {
+  // Pull latest user data from GitHub (survives Railway redeploys)
+  await db.pullFromGitHub();
+
+  await bot.launch();
   console.log("🏋️ VeerHanumantrain is live! Telegram bot running.");
+}
+
+start().catch(err => {
+  console.error("Failed to start:", err.message);
+  process.exit(1);
 });
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
