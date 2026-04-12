@@ -735,6 +735,16 @@ async function start() {
 
   await bot.launch();
   console.log("🏋️ VeerHanumantrain is live! Telegram bot running.");
+
+  // Health check server — Railway needs a port to confirm the service is alive
+  const http = require("http");
+  const port = process.env.PORT || 3000;
+  http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end("OK");
+  }).listen(port, () => {
+    console.log(`Health check on port ${port}`);
+  });
 }
 
 start().catch(err => {
