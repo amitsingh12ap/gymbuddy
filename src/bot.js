@@ -789,41 +789,50 @@ cron.schedule("30 7 * * *", () => {
 
 // ── Launch ────────────────────────────────────────────────────────────────────
 async function start() {
-  // Pull latest user data from GitHub (survives Railway redeploys)
   await db.pullFromGitHub();
 
-  // Clear any stale polling connections before starting
-  const axios = require("axios");
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  try {
-    await axios.post(`https://api.telegram.org/bot${token}/deleteWebhook`, { drop_pending_updates: true });
-    // Small delay to let Telegram release the polling lock
-    await new Promise(r => setTimeout(r, 3000));
-  } catch {}
-
-  await bot.launch();
-  console.log("🏋️ VeerHanumantrain is live! Telegram bot running.");
-
-  // Health check server — Railway needs a port to confirm the service is alive
-  const http = require("http");
   const port = process.env.PORT || 3000;
-  http.createServer((req, res) => {
-    res.writeHead(200);
-    res.end("OK");
-  }).listen(port, () => {
-    console.log(`Health check on port ${port}`);
-  });
+  const webhookUrl = process.env.RENDER_EXTERNAL_URL || process.env.WEBHOOK_URL;
+
+  if (webhookUrl) {
+    // ── WEBHOOK MODE (Render / any hosted service) ──────────────────────
+    const webhookPath = `/webhook/${process.env.TELEGRAM_BOT_TOKEN}`;
+    await bot.launch({
+      webhook: {
+        domain: webhookUrl,
+        path: webhookPath,
+        port: Number(port),
+      },
+    });
+    console.log(`🏋️ VeerHanumantrain is live! Webhook mode on port ${port}`);
+  } else {
+    // ── POLLING MODE (local development) ────────────────────────────────
+    const axios = require("axios");
+    try {
+      await axios.post(
+        `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/deleteWebhook`,
+        { drop_pending_updates: true }
+      );
+      await new Promise(r => setTimeout(r, 2000));
+    } catch {}
+
+    await bot.launch();
+    console.log("🏋️ VeerHanumantrain is live! Polling mode (local dev).");
+
+    // Health check for any platform that checks a port
+    const http = require("http");
+    http.createServer((req, res) => {
+      res.writeHead(200);
+      res.end("OK");
+    }).listen(port, () => {
+      console.log(`Health check on port ${port}`);
+    });
+  }
 }
 
 start().catch(err => {
   console.error("Failed to start:", err.message);
-  // Don't exit immediately on 409 — wait and let Railway retry
-  if (err.message?.includes("409")) {
-    console.log("Waiting 15s for old instance to release...");
-    setTimeout(() => process.exit(1), 15000);
-  } else {
-    process.exit(1);
-  }
+  process.exit(1);
 });
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
